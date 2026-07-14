@@ -8,26 +8,36 @@ $script:IgnoreNextClick = $false
 $script:Executable = ""
 $script:Arguments = ""
 
-# --- CONFIGURACIÓN DE LA INTERFAZ PRINCIPAL ---
+# --- MAIN INTERFACE CONFIGURATION ---
 $form = New-Object Windows.Forms.Form
 $form.Text = "PowerShell Macro Recorder"
 $form.Size = New-Object Drawing.Size(700,500)
 $form.StartPosition = "CenterScreen"
+$form.BackColor = [Drawing.Color]::FromArgb(235, 236, 240) # Styled classic gray background
+$form.Font = New-Object Drawing.Font("Segoe UI", 9)
+$form.FormBorderStyle = "FixedSingle"
+$form.MaximizeBox = $false
+
+# Common button font style
+$fontButtons = New-Object Drawing.Font("Segoe UI Black", 10, [Drawing.FontStyle]::Bold)
 
 $lblExe = New-Object Windows.Forms.Label
 $lblExe.Text = "Executable:"
-$lblExe.Location = New-Object Drawing.Point(10,50)
+$lblExe.Location = New-Object Drawing.Point(15,70)
 $lblExe.AutoSize = $true
+$lblExe.Font = New-Object Drawing.Font("Segoe UI Semibold", 9)
+$lblExe.ForeColor = [Drawing.Color]::FromArgb(50, 50, 50)
 
 $txtExe = New-Object Windows.Forms.TextBox
-$txtExe.Location = New-Object Drawing.Point(90,47)
-$txtExe.Size = New-Object Drawing.Size(470,22)
+$txtExe.Location = New-Object Drawing.Point(95,67)
+$txtExe.Size = New-Object Drawing.Size(515,23)
 $txtExe.Text = "notepad.exe"
 
 $btnBrowse = New-Object Windows.Forms.Button
 $btnBrowse.Text = "..."
-$btnBrowse.Location = New-Object Drawing.Point(565,45)
-$btnBrowse.Size = New-Object Drawing.Size(40,25)
+$btnBrowse.Location = New-Object Drawing.Point(620,65)
+$btnBrowse.Size = New-Object Drawing.Size(45,25)
+$btnBrowse.FlatStyle = [Windows.Forms.FlatStyle]::Standard
 
 $form.Controls.AddRange(@($lblExe, $txtExe, $btnBrowse))
 
@@ -35,27 +45,36 @@ $list = New-Object Windows.Forms.ListView
 $list.View = "Details"
 $list.FullRowSelect = $true
 $list.GridLines = $true
-$list.Location = New-Object Drawing.Point(10,90) # Subido un poco ya que no está el delay
-$list.Size = New-Object Drawing.Size(660,330)
+$list.Location = New-Object Drawing.Point(15,110)
+$list.Size = New-Object Drawing.Size(650,330)
+$list.BorderStyle = [Windows.Forms.BorderStyle]::Fixed3D
 
-$list.Columns.Add("Tiempo",100) | Out-Null
-$list.Columns.Add("Accion",120) | Out-Null
+$list.Columns.Add("Time",100) | Out-Null
+$list.Columns.Add("Action",120) | Out-Null
 $list.Columns.Add("X",80) | Out-Null
 $list.Columns.Add("Y",80) | Out-Null
-$list.Columns.Add("Ventana",260) | Out-Null
-$list.Columns.Add("Tamaño",120) | Out-Null
+$list.Columns.Add("Window",260) | Out-Null
+$list.Columns.Add("Size",120) | Out-Null
 
 $form.Controls.Add($list)
 
 $btnRecord = New-Object Windows.Forms.Button
-$btnRecord.Text = "Record"
-$btnRecord.Location = New-Object Drawing.Point(10,10)
-$btnRecord.Size = New-Object Drawing.Size(100,30)
+$btnRecord.Text = "RECORD"
+$btnRecord.Location = New-Object Drawing.Point(15,15)
+$btnRecord.Size = New-Object Drawing.Size(110,38)
+$btnRecord.FlatStyle = [Windows.Forms.FlatStyle]::Popup
+$btnRecord.BackColor = [Drawing.Color]::FromArgb(214, 48, 49) # Carmine Red
+$btnRecord.ForeColor = [Drawing.Color]::White
+$btnRecord.Font = $fontButtons
 
 $btnExport = New-Object Windows.Forms.Button
-$btnExport.Text = "Export"
-$btnExport.Location = New-Object Drawing.Point(230,10)
-$btnExport.Size = New-Object Drawing.Size(100,30)
+$btnExport.Text = "EXPORT"
+$btnExport.Location = New-Object Drawing.Point(135,15)
+$btnExport.Size = New-Object Drawing.Size(110,38)
+$btnExport.FlatStyle = [Windows.Forms.FlatStyle]::Popup
+$btnExport.BackColor = [Drawing.Color]::FromArgb(38, 166, 91) # Forest Green
+$btnExport.ForeColor = [Drawing.Color]::White
+$btnExport.Font = $fontButtons
 
 $form.Controls.AddRange(@($btnRecord,$btnExport))
 
@@ -93,12 +112,11 @@ $btnBrowse.Add_Click({
     if($dlg.ShowDialog() -eq "OK") { $txtExe.Text = $dlg.FileName }
 })
 
-# --- BOTÓN GRABAR MODIFICADO (TIEMPO CONTINUO) ---
+# --- RECORD BUTTON ---
 $btnRecord.Add_Click({
     $global:Events.Clear()
     $list.Items.Clear()
 
-    # Seteamos el tiempo INMEDIATAMENTE antes de lanzar la app
     $script:StartTime = Get-Date
     $global:Recording = $true
 
@@ -119,15 +137,13 @@ $btnRecord.Add_Click({
         catch
         {
             $global:Recording = $false
-            [System.Windows.Forms.MessageBox]::Show("No se pudo iniciar:`n`n$($txtExe.Text)`n`n$($_.Exception.Message)")
+            [System.Windows.Forms.MessageBox]::Show("Could not start:`n`n$($txtExe.Text)`n`n$($_.Exception.Message)")
             return
         }
     }
 
-    # El cuadro de mensaje aparece mientras el juego carga de fondo. 
-    # Todo ese tiempo transcurrido se acumulará de forma transparente.
     [System.Windows.Forms.MessageBox]::Show(
-        "Grabando...`r`n`r`nPresione Aceptar para detener la grabación.",
+        "Recording...`r`n`r`nPress OK to stop recording.",
         "Macro Recorder"
     )
 	
@@ -136,7 +152,7 @@ $btnRecord.Add_Click({
     $script:LastButtons = [System.Windows.Forms.Control]::MouseButtons
 })
 
-# --- EXPORTADOR ---
+# --- EXPORTER ---
 $btnExport.Add_Click({
     $dlg = New-Object Windows.Forms.SaveFileDialog
     $dlg.Filter="PowerShell (*.ps1)|*.ps1"
@@ -149,9 +165,8 @@ $btnExport.Add_Click({
         $out.Add('Add-Type -AssemblyName System.Drawing')
         $out.Add('')
         
-        # Auto-arranque limpio (ya sin la línea de Start-Sleep innecesaria)
         if ($txtExe.Text.Trim() -ne "") {
-            $out.Add("# Iniciar la aplicacion de forma automatica")
+            $out.Add("# Start the application automatically")
             $exePath = $txtExe.Text.Replace('"', '""')
             if ($exePath.StartsWith("shell:")) {
                 $out.Add("Start-Process ""explorer.exe"" -ArgumentList ""$exePath""")
@@ -271,11 +286,11 @@ foreach($event in $macroEvents) {
 '@)
 
         [System.IO.File]::WriteAllLines($dlg.FileName, $out, [System.Text.Encoding]::UTF8)
-        [System.Windows.Forms.MessageBox]::Show("Macro exportada correctamente.")
+        [System.Windows.Forms.MessageBox]::Show("Macro exported successfully.")
     }
 })
 
-# --- COMPILACIÓN DE AYUDAS NATIVAS ---
+# --- NATIVE HELPER COMPILATION ---
 Add-Type -ReferencedAssemblies System.Drawing @"
 using System;
 using System.Runtime.InteropServices;
@@ -339,7 +354,7 @@ public class WinInfo
 }
 "@
 
-# --- BUCLE DE CAPTURA DEL TEMPORIZADOR ---
+# --- TIMER CAPTURE LOOP ---
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 20
 
@@ -356,9 +371,8 @@ $timer.Add_Tick({
             $proc = [WinInfo]::ProcessUnderMouse($p.X,$p.Y)
             $title = [WinInfo]::WindowUnderMouse($p.X,$p.Y)
 
-            Write-Host "Click detectado -> Proceso Actual: [$proc] | Ventana: [$title]" -ForegroundColor Cyan
+            Write-Host "Click detected -> Current Process: [$proc] | Window: [$title]" -ForegroundColor Cyan
 
-            # FILTRO UNIVERSAL (EXE vs STORE)
             if ($txtExe.Text.Trim() -ne "") {
                 if ($txtExe.Text.ToLower().StartsWith("shell:")) {
                     if ($proc.ToLower() -ne "applicationframehost.exe" -or [string]::IsNullOrWhiteSpace($title) -or $title -eq "Macro Recorder") {
@@ -375,7 +389,7 @@ $timer.Add_Tick({
             $pos = [WinInfo]::WindowPosition($p.X,$p.Y)
             $action = if($buttons -eq [System.Windows.Forms.MouseButtons]::Left) { "LeftDown" } else { "RightDown" }
 
-            Write-Host "¡GRABADO CON ÉXITO! -> [$action] en X:$($p.X-$pos[0]) Y:$($p.Y-$pos[1])" -ForegroundColor Green
+            Write-Host "RECORDED SUCCESSFULLY! -> [$action] at X:$($p.X-$pos[0]) Y:$($p.Y-$pos[1])" -ForegroundColor Green
 
             Add-EventRow $action ($p.X-$pos[0]) ($p.Y-$pos[1]) $title $proc
 
@@ -387,6 +401,36 @@ $timer.Add_Tick({
     }
 })
 
+# --- CLEAN EXIT CONTROL (HANDLING CTRL+C AND FORM CLOSING) ---
+
+# 1. When the UI is closed, stop the Timer and exit cleanly.
+$form.Add_FormClosing({
+    $timer.Stop()
+    $timer.Dispose()
+    $global:Recording = $false
+})
+
+# 2. Capture if the user presses CTRL + C in the PowerShell console to close the app.
+[System.Console]::TreatControlCAsInput = $false
+$sub = [ConsoleCancelEventHandler] {
+    param([object]$sender, [ConsoleCancelEventArgs]$e)
+    $e.Cancel = $true # Cancel the native abrupt interruption so we can close cleanly
+    
+    # Safely close the form from the UI thread
+    if ($form -and $form.Visible) {
+        $form.Invoke([Action]{ 
+            $timer.Stop()
+            $timer.Dispose()
+            $form.Close() 
+        })
+    }
+}
+[System.Console]::add_CancelKeyPress($sub)
+
+# --- PROGRAM START ---
 $timer.Start()
 $form.Add_Shown({$form.Activate()})
 [void]$form.ShowDialog()
+
+# Unsubscribe from the event on exit to avoid leaking into the active console session
+[System.Console]::remove_CancelKeyPress($sub)
