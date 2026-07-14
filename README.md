@@ -34,7 +34,7 @@ If you improbe it let me know!!
 
 ## Usage
 
-1. Run `MacroRecorder.ps1`
+1. Run `PowerShell-Macro-Recorder.ps1`
 2. Select the executable or Microsoft Store application.
 3. Click **Record**
 4. Perform the desired actions.
