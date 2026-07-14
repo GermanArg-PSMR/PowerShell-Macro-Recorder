@@ -1,26 +1,48 @@
+# ==============================================================================
+# POWERSHELL MACRO RECORDER & PLAYER (Pure Clicks Edition)
+# ==============================================================================
+# This script records mouse clicks (Left/Right) relative to a target window
+# and generates a reproducible PowerShell script to replay those actions.
+# Includes a modern UI, process filtering, and clean console cancellation (Ctrl+C).
+#
+# NEW FEATURE: Console logging is now completely silent by default unless
+# executed with the -v or -Verbose switch.
+# ==============================================================================
+
+param(
+    [Alias("Verbose")]
+    [switch]$v
+)
+
+# Store the parameter in the script scope so it can be accessed reliably inside GUI event handlers
+$script:v = $v
+
+# Load required .NET assemblies for building the Graphical User Interface (GUI)
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$global:Recording = $false
-$global:Events = New-Object System.Collections.ArrayList
+# --- GLOBAL STATE VARIABLES ---
+$global:Recording = $false                         # Tracks if the recorder is currently capturing clicks
+$global:Events = New-Object System.Collections.ArrayList # Stores captured click events in memory
 
 $script:IgnoreNextClick = $false
 $script:Executable = ""
 $script:Arguments = ""
 
-# --- MAIN INTERFACE CONFIGURATION ---
+# --- MAIN GRAPHICAL INTERFACE CONFIGURATION (WinForms) ---
 $form = New-Object Windows.Forms.Form
 $form.Text = "PowerShell Macro Recorder"
 $form.Size = New-Object Drawing.Size(700,500)
 $form.StartPosition = "CenterScreen"
-$form.BackColor = [Drawing.Color]::FromArgb(235, 236, 240) # Styled classic gray background
+$form.BackColor = [Drawing.Color]::FromArgb(235, 236, 240) # Styled classic Neumorphic light-gray background
 $form.Font = New-Object Drawing.Font("Segoe UI", 9)
-$form.FormBorderStyle = "FixedSingle"
-$form.MaximizeBox = $false
+$form.FormBorderStyle = "FixedSingle"                      # Prevents window resizing
+$form.MaximizeBox = $false                                 # Disables maximize button
 
-# Common button font style
+# Shared font style for primary action buttons
 $fontButtons = New-Object Drawing.Font("Segoe UI Black", 10, [Drawing.FontStyle]::Bold)
 
+# Label for Executable path input
 $lblExe = New-Object Windows.Forms.Label
 $lblExe.Text = "Executable:"
 $lblExe.Location = New-Object Drawing.Point(15,70)
@@ -28,11 +50,13 @@ $lblExe.AutoSize = $true
 $lblExe.Font = New-Object Drawing.Font("Segoe UI Semibold", 9)
 $lblExe.ForeColor = [Drawing.Color]::FromArgb(50, 50, 50)
 
+# TextBox where the user enters the target executable (e.g., notepad.exe)
 $txtExe = New-Object Windows.Forms.TextBox
 $txtExe.Location = New-Object Drawing.Point(95,67)
 $txtExe.Size = New-Object Drawing.Size(515,23)
 $txtExe.Text = "notepad.exe"
 
+# Browse button to look up local .exe files on disk
 $btnBrowse = New-Object Windows.Forms.Button
 $btnBrowse.Text = "..."
 $btnBrowse.Location = New-Object Drawing.Point(620,65)
@@ -41,6 +65,7 @@ $btnBrowse.FlatStyle = [Windows.Forms.FlatStyle]::Standard
 
 $form.Controls.AddRange(@($lblExe, $txtExe, $btnBrowse))
 
+# ListView layout to display recorded actions in real time
 $list = New-Object Windows.Forms.ListView
 $list.View = "Details"
 $list.FullRowSelect = $true
@@ -49,70 +74,81 @@ $list.Location = New-Object Drawing.Point(15,110)
 $list.Size = New-Object Drawing.Size(650,330)
 $list.BorderStyle = [Windows.Forms.BorderStyle]::Fixed3D
 
-$list.Columns.Add("Time",100) | Out-Null
-$list.Columns.Add("Action",120) | Out-Null
-$list.Columns.Add("X",80) | Out-Null
-$list.Columns.Add("Y",80) | Out-Null
-$list.Columns.Add("Window",260) | Out-Null
-$list.Columns.Add("Size",120) | Out-Null
+# Configure columns for the logged macro actions
+$list.Columns.Add("Time (ms)", 100) | Out-Null
+$list.Columns.Add("Action", 120) | Out-Null
+$list.Columns.Add("X", 80) | Out-Null
+$list.Columns.Add("Y", 80) | Out-Null
+$list.Columns.Add("Window Title", 260) | Out-Null
+$list.Columns.Add("Win Size", 120) | Out-Null
 
 $form.Controls.Add($list)
 
+# Record button (Carmine Red)
 $btnRecord = New-Object Windows.Forms.Button
 $btnRecord.Text = "RECORD"
 $btnRecord.Location = New-Object Drawing.Point(15,15)
 $btnRecord.Size = New-Object Drawing.Size(110,38)
 $btnRecord.FlatStyle = [Windows.Forms.FlatStyle]::Popup
-$btnRecord.BackColor = [Drawing.Color]::FromArgb(214, 48, 49) # Carmine Red
+$btnRecord.BackColor = [Drawing.Color]::FromArgb(214, 48, 49) 
 $btnRecord.ForeColor = [Drawing.Color]::White
 $btnRecord.Font = $fontButtons
 
+# Export button (Forest Green)
 $btnExport = New-Object Windows.Forms.Button
 $btnExport.Text = "EXPORT"
 $btnExport.Location = New-Object Drawing.Point(135,15)
 $btnExport.Size = New-Object Drawing.Size(110,38)
 $btnExport.FlatStyle = [Windows.Forms.FlatStyle]::Popup
-$btnExport.BackColor = [Drawing.Color]::FromArgb(38, 166, 91) # Forest Green
+$btnExport.BackColor = [Drawing.Color]::FromArgb(38, 166, 91) 
 $btnExport.ForeColor = [Drawing.Color]::White
 $btnExport.Font = $fontButtons
 
-$form.Controls.AddRange(@($btnRecord,$btnExport))
+$form.Controls.AddRange(@($btnRecord, $btnExport))
 
-$script:StartTime = Get-Date
-$script:LastButtons = 0
+$script:StartTime = Get-Date # Base time to calculate relative event delays
+$script:LastButtons = 0      # Track previous mouse state to catch transitions
 
-function Add-EventRow($Action,$X,$Y,$Window,$Process){
-    $elapsed = [math]::Round(((Get-Date)-$script:StartTime).TotalMilliseconds)
+# --- HELPER FUNCTIONS ---
+
+# Adds a newly recorded click event to both the global memory list and the GUI ListView
+function Add-EventRow($Action, $X, $Y, $Window, $Process) {
+    $elapsed = [math]::Round(((Get-Date) - $script:StartTime).TotalMilliseconds)
+    
+    # Store internal representation for code generator
     $obj = [PSCustomObject]@{
-        Time=$elapsed
-        Action=$Action
-        Process=$Process
-        Window=$Window
-        X=$X
-        Y=$Y
-        Width=0
-        Height=0
+        Time    = $elapsed
+        Action  = $Action
+        Process = $Process
+        Window  = $Window
+        X       = $X
+        Y       = $Y
+        Width   = 0
+        Height  = 0
     }
-
     $global:Events.Add($obj) | Out-Null
 
+    # Visual representation inside the UI
     $item = New-Object Windows.Forms.ListViewItem($elapsed.ToString())
     [void]$item.SubItems.Add($Action)
     [void]$item.SubItems.Add($X.ToString())
     [void]$item.SubItems.Add($Y.ToString())
     [void]$item.SubItems.Add($Window)
-    [void]$item.SubItems.Add("")
+    [void]$item.SubItems.Add("") # Placeholder for window dimensions
 
     $list.Items.Add($item) | Out-Null
 }
 
+# --- EVENT HANDLERS ---
+
+# Triggers OpenFileDialog to browse and select a local executable path
 $btnBrowse.Add_Click({
     $dlg = New-Object Windows.Forms.OpenFileDialog
     $dlg.Filter = "Executable (*.exe)|*.exe|All files (*.*)|*.*"
     if($dlg.ShowDialog() -eq "OK") { $txtExe.Text = $dlg.FileName }
 })
 
-# --- RECORD BUTTON ---
+# Starts recording: launches target process (if specified), resets states, and displays stop prompt
 $btnRecord.Add_Click({
     $global:Events.Clear()
     $list.Items.Clear()
@@ -120,6 +156,7 @@ $btnRecord.Add_Click({
     $script:StartTime = Get-Date
     $global:Recording = $true
 
+    # Launch target program prior to recording if a value is supplied
     if($txtExe.Text.Trim() -ne "")
     {
         try
@@ -137,11 +174,12 @@ $btnRecord.Add_Click({
         catch
         {
             $global:Recording = $false
-            [System.Windows.Forms.MessageBox]::Show("Could not start:`n`n$($txtExe.Text)`n`n$($_.Exception.Message)")
+            [System.Windows.Forms.MessageBox]::Show("Could not start execution of:`n`n$($txtExe.Text)`n`n$($_.Exception.Message)")
             return
         }
     }
 
+    # Thread-blocking Message Box behaves as an intuitive "Pause/Stop" trigger
     [System.Windows.Forms.MessageBox]::Show(
         "Recording...`r`n`r`nPress OK to stop recording.",
         "Macro Recorder"
@@ -152,7 +190,8 @@ $btnRecord.Add_Click({
     $script:LastButtons = [System.Windows.Forms.Control]::MouseButtons
 })
 
-# --- EXPORTER ---
+# --- PS1 FILE GENERATOR (EXPORT) ---
+# Compiles recorded clicks into a standalone self-contained execution script (.ps1)
 $btnExport.Add_Click({
     $dlg = New-Object Windows.Forms.SaveFileDialog
     $dlg.Filter="PowerShell (*.ps1)|*.ps1"
@@ -160,13 +199,24 @@ $btnExport.Add_Click({
     if($dlg.ShowDialog() -eq "OK") {
         $out = New-Object System.Collections.Generic.List[string]
 
+        # Standard file headers
         $out.Add('# Generated by PowerShell Macro Recorder')
+        $out.Add('')
+        
+        # ADD PARAMETER BLOCK FOR THE EXPORTED SCRIPT (-v / -Verbose)
+        $out.Add('param(')
+        $out.Add('    [Alias("Verbose")]')
+        $out.Add('    [switch]$v')
+        $out.Add(')')
+        $out.Add('')
+        
         $out.Add('Add-Type -AssemblyName System.Windows.Forms')
         $out.Add('Add-Type -AssemblyName System.Drawing')
         $out.Add('')
         
+        # Output auto-launch code if executable is configured
         if ($txtExe.Text.Trim() -ne "") {
-            $out.Add("# Start the application automatically")
+            $out.Add("# Launch the application automatically")
             $exePath = $txtExe.Text.Replace('"', '""')
             if ($exePath.StartsWith("shell:")) {
                 $out.Add("Start-Process ""explorer.exe"" -ArgumentList ""$exePath""")
@@ -181,6 +231,8 @@ $btnExport.Add_Click({
             $out.Add('')
         }
 
+        # Embed a self-contained, highly stable C# native compiler for mouse playbacks inside the target .ps1 script.
+        # This bypasses native PowerShell speed limitations, and safely queries coordinates relative to targeted window handles.
         $out.Add(@'
 Add-Type @"
 using System;
@@ -228,11 +280,13 @@ public class MacroPlayer
     {
         IntPtr hwnd = IntPtr.Zero;
         try {
+            // Locate process by executable name
             foreach(var p in System.Diagnostics.Process.GetProcesses()) {
                 if(!string.IsNullOrEmpty(processName) && string.Equals(p.ProcessName + ".exe", processName, StringComparison.OrdinalIgnoreCase)) {
                     hwnd = p.MainWindowHandle;
                     if(hwnd != IntPtr.Zero) break;
                 }
+                // Locate process by matching window title
                 if(!string.IsNullOrEmpty(title) && p.MainWindowTitle.Contains(title)) {
                     hwnd = p.MainWindowHandle;
                     if(hwnd != IntPtr.Zero) break;
@@ -243,11 +297,13 @@ public class MacroPlayer
         if(hwnd == IntPtr.Zero && !string.IsNullOrEmpty(title))
             hwnd = FindWindow(null, title);
 
+        // Fetch current coordinates of target application window (Handles resolution-independent dragging/moving)
         RECT r = new RECT { Left = 0, Top = 0 };
         if (hwnd != IntPtr.Zero) {
             GetWindowRect(hwnd, out r);
         }
 
+        // Translate relative coordinates (from record time) to actual hardware screen pixels
         if(action == "LeftDown") {
             LeftClick(r.Left + x, r.Top + y);
         } else if(action == "RightDown") {
@@ -262,6 +318,7 @@ public class MacroPlayer
         $out.Add('')
         $out.Add('$macroEvents = @(')
 
+        # Iterate and write events preserving precise millisecond-accurate delays between actions
         $previousTime = 0
         foreach($e in $global:Events) {
             $delay = $e.Time - $previousTime
@@ -276,11 +333,18 @@ public class MacroPlayer
         $out.Add(')')
         $out.Add('')
         
+        # Script footer that drives the timing, checks the -v / -Verbose flag and plays back macro steps
         $out.Add(@'
 foreach($event in $macroEvents) {
     if($event.Delay -gt 0) {
         Start-Sleep -Milliseconds $event.Delay
     }
+    
+    # Conditional output in the generated script: only log steps if executed with -v or -Verbose
+    if ($v) {
+        Write-Host "PLAYBACK -> Executing Action: [$($event.Action)] on Process: [$($event.Process)] (Window: [$($event.Window)]) at X:$($event.X) Y:$($event.Y)" -ForegroundColor Yellow
+    }
+    
     [MacroPlayer]::ExecuteAction($event.Action, $event.Process, $event.Window, $event.X, $event.Y) | Out-Null
 }
 '@)
@@ -290,7 +354,8 @@ foreach($event in $macroEvents) {
     }
 })
 
-# --- NATIVE HELPER COMPILATION ---
+# --- COMPILACIÓN OF NATIVE C# HELPERS (RECORD TIME) ---
+# Generates helper structures for real-time mouse query coordinates, processes, and parent window bounds.
 Add-Type -ReferencedAssemblies System.Drawing @"
 using System;
 using System.Runtime.InteropServices;
@@ -308,7 +373,7 @@ public class WinInfo
     [DllImport("user32.dll")]
     static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
 
-    const uint GA_ROOT = 2;
+    const uint GA_ROOT = 2; // Fetches parent window, preventing capture from getting stuck inside child subcomponents
 
     public static string WindowUnderMouse(int x, int y)
     {
@@ -354,15 +419,17 @@ public class WinInfo
 }
 "@
 
-# --- TIMER CAPTURE LOOP ---
+# --- TIMER CAPTURE BUCKET LOOP ---
+# Rapidly samples mouse state to capture click downs instantaneously
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 20
+$timer.Interval = 20 # 20ms ensures high responsiveness without CPU overload
 
 $timer.Add_Tick({
     if(-not $global:Recording){ return }
 
     $buttons = [System.Windows.Forms.Control]::MouseButtons
 
+    # Handle transitions (button states have changed since the last tick)
     if($buttons -ne $script:LastButtons){
         $script:LastButtons = $buttons
 		
@@ -371,11 +438,15 @@ $timer.Add_Tick({
             $proc = [WinInfo]::ProcessUnderMouse($p.X,$p.Y)
             $title = [WinInfo]::WindowUnderMouse($p.X,$p.Y)
 
-            Write-Host "Click detected -> Current Process: [$proc] | Window: [$title]" -ForegroundColor Cyan
+            # Log transition detection metadata to console ONLY if verbose switch ($v) is active
+            if ($script:v) {
+                Write-Host "Click detected -> Current Process: [$proc] | Window: [$title]" -ForegroundColor Cyan
+            }
 
+            # Target filter logic: checks if click fits executable constraints (Standard .exe vs Windows App Store Package)
             if ($txtExe.Text.Trim() -ne "") {
                 if ($txtExe.Text.ToLower().StartsWith("shell:")) {
-                    if ($proc.ToLower() -ne "applicationframehost.exe" -or [string]::IsNullOrWhiteSpace($title) -or $title -eq "Macro Recorder") {
+                    if ($proc.ToLower() -ne "applicationframehost.exe" -or [string]::IsNullOrWhiteSpace($title) -or $title -eq "PowerShell Macro Recorder") {
                         return 
                     }
                 } else {
@@ -386,13 +457,19 @@ $timer.Add_Tick({
                 }
             }
 
+            # Gather bounds and execute relative offset calculation
             $pos = [WinInfo]::WindowPosition($p.X,$p.Y)
             $action = if($buttons -eq [System.Windows.Forms.MouseButtons]::Left) { "LeftDown" } else { "RightDown" }
 
-            Write-Host "RECORDED SUCCESSFULLY! -> [$action] at X:$($p.X-$pos[0]) Y:$($p.Y-$pos[1])" -ForegroundColor Green
+            # Print feedback to system console on successful filter validation ONLY if verbose switch ($v) is active
+            if ($script:v) {
+                Write-Host "RECORDED SUCCESSFULLY! -> [$action] at X:$($p.X-$pos[0]) Y:$($p.Y-$pos[1])" -ForegroundColor Green
+            }
 
+            # Record event properties
             Add-EventRow $action ($p.X-$pos[0]) ($p.Y-$pos[1]) $title $proc
 
+            # Update size dimensions on visual ListView
             $last = $global:Events[$global:Events.Count-1]
             $last.Width = $pos[2]
             $last.Height = $pos[3]
@@ -401,23 +478,23 @@ $timer.Add_Tick({
     }
 })
 
-# --- CLEAN EXIT CONTROL (HANDLING CTRL+C AND FORM CLOSING) ---
+# --- NATIVE CONSOLE CANCELLATION & FormClosing PIPELINES ---
 
-# 1. When the UI is closed, stop the Timer and exit cleanly.
+# Event handler: Stops execution loop gracefully if visual Form window is closed by standard window interactions
 $form.Add_FormClosing({
     $timer.Stop()
     $timer.Dispose()
     $global:Recording = $false
 })
 
-# 2. Capture if the user presses CTRL + C in the PowerShell console to close the app.
+# Native Console Interceptor: Maps Ctrl+C to close and release form thread loops gracefully instead of hanging
 [System.Console]::TreatControlCAsInput = $false
 $sub = [ConsoleCancelEventHandler] {
     param([object]$sender, [ConsoleCancelEventArgs]$e)
-    $e.Cancel = $true # Cancel the native abrupt interruption so we can close cleanly
+    $e.Cancel = $true # Intercept crash thread
     
-    # Safely close the form from the UI thread
     if ($form -and $form.Visible) {
+        $form.FormNoClose = $false
         $form.Invoke([Action]{ 
             $timer.Stop()
             $timer.Dispose()
@@ -427,10 +504,10 @@ $sub = [ConsoleCancelEventHandler] {
 }
 [System.Console]::add_CancelKeyPress($sub)
 
-# --- PROGRAM START ---
+# --- PROGRAM ENTRYPOINT ---
 $timer.Start()
 $form.Add_Shown({$form.Activate()})
 [void]$form.ShowDialog()
 
-# Unsubscribe from the event on exit to avoid leaking into the active console session
+# Clean up registration bindings upon program teardown
 [System.Console]::remove_CancelKeyPress($sub)
