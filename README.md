@@ -1,2 +1,46 @@
-# PowerShell-Macro-Recorder
-Lightweight PowerShell Macro Recorder with GUI. Records mouse clicks using relative window coordinates and exports standalone PowerShell scripts.
+# PowerShell Macro Recorder
+
+A lightweight macro recorder written entirely in PowerShell.
+
+No installation required.
+
+Simply run the script and start recording.
+
+---
+
+## Features
+
+- Windows Forms GUI
+- Mouse click recording
+- Relative window coordinates
+- Automatic application launch
+- Win32 executable support
+- Microsoft Store application support
+- Standalone PowerShell export
+- Accurate timing preservation
+
+---
+
+## Requirements
+
+- Windows 10 or Windows 11
+- PowerShell 5.1 or newer
+
+---
+
+## Usage
+
+1. Run `MacroRecorder.ps1`
+2. Select the executable or Microsoft Store application.
+3. Click **Record**
+4. Perform the desired actions.
+5. Press **OK** to stop recording.
+6. Click **Export**
+7. Run the exported PowerShell script.
+
+---
+
+
+## License
+
+MIT
