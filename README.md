@@ -6,6 +6,10 @@ No installation required.
 
 Simply run the script and start recording.
 
+Created using ChatGPT and Gemini. Im not good at programing but I needed this program. Maybe some one else need it.
+
+If you improbe it let me know!!
+
 ---
 
 ## Features
